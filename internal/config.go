@@ -68,17 +68,6 @@ type Config struct {
 }
 
 var (
-	// global SMTP fallback
-	globalSMTP = SmtpCfg{
-		Host: env.MustEnv("SMTP_HOST"),
-		Port: env.MustEnvInt("SMTP_PORT"),
-		User: env.MustEnv("SMTP_USER"),
-		Pass: env.MustEnv("SMTP_PASS"),
-		SSL:  env.EnvBool("SMTP_SSL", false),
-	}
-
-	globalSubjectPrefix = env.Env("SUBJECT_PREFIX", "[Contact]")
-
 	emailRegex = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 	conf *Config
@@ -86,6 +75,8 @@ var (
 
 func GetConfig() *Config {
 	if conf == nil {
+		globalSMTP := loadGlobalSMTP()
+		globalSubjectPrefix := env.Env("SUBJECT_PREFIX", "[Contact]")
 		conf = &Config{
 			RateBurst:         env.EnvInt("RATE_LIMIT_BURST", 3),
 			RateRefillMinutes: env.EnvInt("RATE_LIMIT_REFILL_MINUTES", 1),
@@ -93,13 +84,23 @@ func GetConfig() *Config {
 			AllowForm:         env.EnvBool("ALLOW_FORM", true),
 			MaxBodyKB:         env.EnvInt("MAX_BODY_KB", 1024),
 			ListenAddr:        env.Env("LISTEN_ADDR", ":3000"),
-			Sites:             loadSitesFromEnv(),
+			Sites:             loadSitesFromEnv(globalSMTP, globalSubjectPrefix),
 		}
 	}
 	return conf
 }
 
-func loadSitesFromEnv() map[string]*SiteCfg {
+func loadGlobalSMTP() SmtpCfg {
+	return SmtpCfg{
+		Host: env.MustEnv("SMTP_HOST"),
+		Port: env.MustEnvInt("SMTP_PORT"),
+		User: env.MustEnv("SMTP_USER"),
+		Pass: env.MustEnv("SMTP_PASS"),
+		SSL:  env.EnvBool("SMTP_SSL", false),
+	}
+}
+
+func loadSitesFromEnv(globalSMTP SmtpCfg, globalSubjectPrefix string) map[string]*SiteCfg {
 	siteByKey := map[string]*SiteCfg{}
 
 	raw := os.Getenv("SITES")
@@ -120,7 +121,13 @@ func loadSitesFromEnv() map[string]*SiteCfg {
 		prefix := env.Env(uc+"_SUBJECT_PREFIX", globalSubjectPrefix)
 		secret := os.Getenv(uc + "_SECRET")
 
-		var siteSMTP *SmtpCfg
+		siteSMTP := &SmtpCfg{
+			Host: globalSMTP.Host,
+			Port: globalSMTP.Port,
+			User: globalSMTP.User,
+			Pass: globalSMTP.Pass,
+			SSL:  globalSMTP.SSL,
+		}
 		if v := os.Getenv(uc + "_SMTP_HOST"); v != "" {
 			siteSMTP = &SmtpCfg{
 				Host: v,
@@ -131,12 +138,17 @@ func loadSitesFromEnv() map[string]*SiteCfg {
 			}
 		}
 
+		fromAddr := env.Env("FROM_ADDR", globalSMTP.User)
+		if v := os.Getenv(uc + "_FROM_ADDR"); strings.TrimSpace(v) != "" {
+			fromAddr = v
+		}
+
 		siteByKey[key] = &SiteCfg{
 			Key:            key,
 			To:             to,
 			AllowedOrigins: allowed,
 			SubjectPrefix:  prefix,
-			FromAddr:       env.Env("FROM_ADDR", globalSMTP.User),
+			FromAddr:       fromAddr,
 			Secret:         secret,
 			SMTP:           siteSMTP,
 		}

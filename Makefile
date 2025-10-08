@@ -10,3 +10,6 @@ PRODUCT_ALPHA_TO = hello@produt.com
 
 run: 
 	go run cmd/api/main.go
+
+test: 
+	go test ./...	

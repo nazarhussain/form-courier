@@ -16,9 +16,7 @@ import (
 	"github.com/jordan-wright/email"
 )
 
-var (
-	config = GetConfig()
-)
+var sendEmailFunc = sendEmailSMTP
 
 // Parse payload (JSON or form)
 type ContactRequest struct {
@@ -35,6 +33,7 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 
 func HandleContact(w http.ResponseWriter, r *http.Request) {
 	logger := LoggerFromContext(r.Context())
+	cfg := GetConfig()
 
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -55,7 +54,7 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs, ok := config.Sites[siteKey]
+	cs, ok := cfg.Sites[siteKey]
 	if !ok {
 		logger.Warn("unknown site", "site", siteKey)
 		http.Error(w, "unknown site", http.StatusNotFound)
@@ -77,14 +76,14 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 
 	ip := clientIP(r)
 	logger = logger.With("ip", ip)
-	if !Allow(siteKey, ip, config.RateBurst, config.RateRefillMinutes) {
+	if !Allow(siteKey, ip, cfg.RateBurst, cfg.RateRefillMinutes) {
 		logger.Warn("rate limited")
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
 	// Read body once for HMAC (and to enforce max size), then re-wrap for decode
-	maxBytes := config.MaxBodyKB * 1024
+	maxBytes := cfg.MaxBodyKB * 1024
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(maxBytes)+1))
 	r.Body.Close()
 	if err != nil {
@@ -115,13 +114,13 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	var p = ContactRequest{}
 
 	switch {
-	case strings.HasPrefix(ct, "application/json") && config.AllowJSON:
+	case strings.HasPrefix(ct, "application/json") && cfg.AllowJSON:
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			logger.Warn("bad json payload", "err", err)
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-	case config.AllowForm:
+	case cfg.AllowForm:
 		if err := r.ParseForm(); err != nil {
 			logger.Warn("bad form payload", "err", err)
 			http.Error(w, "bad form", http.StatusBadRequest)
@@ -158,15 +157,7 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	e.Subject = subject
 	e.Text = []byte(msg)
 
-	addr := net.JoinHostPort(cs.SMTP.Host, strconv.Itoa(cs.SMTP.Port))
-	auth := smtp.PlainAuth("", cs.SMTP.User, cs.SMTP.Pass, cs.SMTP.Host)
-
-	if cs.SMTP.SSL {
-		err = e.SendWithTLS(addr, auth, nil)
-	} else {
-		err = e.Send(addr, auth)
-	}
-	if err != nil {
+	if err := sendEmailFunc(cs, e); err != nil {
 		logger.Error("smtp send failed", "err", err)
 		http.Error(w, "failed to send", http.StatusInternalServerError)
 		return
@@ -198,4 +189,18 @@ func verifyHMAC(body []byte, secret, hexSig string) bool {
 	have := strings.ToLower(hexSig)
 	// constant-time compare
 	return hmac.Equal([]byte(want), []byte(have))
+}
+
+func sendEmailSMTP(cs *SiteCfg, e *email.Email) error {
+	if cs.SMTP == nil {
+		return fmt.Errorf("smtp config missing for site %s", cs.Key)
+	}
+
+	addr := net.JoinHostPort(cs.SMTP.Host, strconv.Itoa(cs.SMTP.Port))
+	auth := smtp.PlainAuth("", cs.SMTP.User, cs.SMTP.Pass, cs.SMTP.Host)
+
+	if cs.SMTP.SSL {
+		return e.SendWithTLS(addr, auth, nil)
+	}
+	return e.Send(addr, auth)
 }
