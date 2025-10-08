@@ -36,18 +36,6 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	logger := LoggerFromContext(r.Context())
 	cfg := GetConfig()
 
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Signature")
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodPost {
-		logger.Warn("method not allowed")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	siteKey := strings.TrimPrefix(r.URL.Path, "/v1/contact/")
 	if siteKey == "" || strings.ContainsRune(siteKey, '/') {
 		logger.Warn("bad site key")
@@ -63,16 +51,36 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	}
 	logger = logger.With("site", cs.Key)
 
+	origin := r.Header.Get("Origin")
+	allowedOrigin, originOK := matchOrigin(origin, cs.AllowedOrigins)
+
+	if r.Method == http.MethodOptions {
+		if len(cs.AllowedOrigins) > 0 && origin != "" && !originOK {
+			logger.Warn("origin not allowed", "origin", origin)
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		applyCORSHeaders(w, allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Signature")
+		w.Header().Set("Access-Control-Max-Age", "300")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		logger.Warn("method not allowed")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	// CORS for that site (exact match)
 	if len(cs.AllowedOrigins) > 0 {
-		origin := r.Header.Get("Origin")
-		for _, ao := range cs.AllowedOrigins {
-			if origin == ao {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-				break
-			}
+		if origin != "" && !originOK {
+			logger.Warn("origin not allowed", "origin", origin)
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
 		}
+		applyCORSHeaders(w, allowedOrigin)
 	}
 
 	ip := clientIP(r)
@@ -205,4 +213,29 @@ func sendEmailSMTP(cs *SiteCfg, e *email.Email) error {
 		return e.SendWithTLS(addr, auth, tlsCfg)
 	}
 	return e.Send(addr, auth)
+}
+
+func matchOrigin(origin string, allowed []string) (string, bool) {
+	if len(allowed) == 0 || origin == "" {
+		return "", true
+	}
+	for _, ao := range allowed {
+		if ao == "*" {
+			return "*", true
+		}
+		if origin == ao {
+			return origin, true
+		}
+	}
+	return "", false
+}
+
+func applyCORSHeaders(w http.ResponseWriter, allowedOrigin string) {
+	if allowedOrigin == "" {
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	if allowedOrigin != "*" {
+		w.Header().Set("Vary", "Origin")
+	}
 }

@@ -140,6 +140,80 @@ func TestHandleContactRateLimited(t *testing.T) {
 	}
 }
 
+func TestHandleContactCORSAllowed(t *testing.T) {
+	setupTestConfig(t)
+	conf.Sites["acme"].AllowedOrigins = []string{"https://example.com"}
+
+	sendEmailFunc = func(site *SiteCfg, e *email.Email) error {
+		return nil
+	}
+
+	body := `{"name":"Alice","email":"alice@example.com","message":"Hello there"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/contact/acme", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://example.com")
+	rec := httptest.NewRecorder()
+
+	HandleContact(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://example.com" {
+		t.Fatalf("missing Access-Control-Allow-Origin, got %q", got)
+	}
+}
+
+func TestHandleContactCORSForbidden(t *testing.T) {
+	setupTestConfig(t)
+	conf.Sites["acme"].AllowedOrigins = []string{"https://allowed.example.com"}
+
+	var calls int
+	sendEmailFunc = func(site *SiteCfg, e *email.Email) error {
+		calls++
+		return nil
+	}
+
+	body := `{"name":"Alice","email":"alice@example.com","message":"Hello there"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/contact/acme", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://blocked.example.com")
+	rec := httptest.NewRecorder()
+
+	HandleContact(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rec.Code)
+	}
+	if calls != 0 {
+		t.Fatalf("expected sendEmailFunc not to be called, got %d", calls)
+	}
+}
+
+func TestHandleContactCORSWildcard(t *testing.T) {
+	setupTestConfig(t)
+	conf.Sites["acme"].AllowedOrigins = []string{"*"}
+
+	sendEmailFunc = func(site *SiteCfg, e *email.Email) error {
+		return nil
+	}
+
+	body := `{"name":"Alice","email":"alice@example.com","message":"Hello there"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/contact/acme", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://any.origin.com")
+	rec := httptest.NewRecorder()
+
+	HandleContact(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected wildcard Access-Control-Allow-Origin, got %q", got)
+	}
+}
+
 func TestHandleHealth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
