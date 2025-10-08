@@ -1,7 +1,8 @@
 package form_mailer
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -103,7 +104,7 @@ func loadSitesFromEnv() map[string]*SiteCfg {
 
 	raw := os.Getenv("SITES")
 	if strings.TrimSpace(raw) == "" {
-		log.Fatal("SITES is required (comma-separated list of site keys, e.g. SITES=my-site,product-alpha)")
+		fatalf("SITES is required (comma-separated list of site keys, e.g. SITES=my-site,product-alpha)")
 	}
 	keys := splitString(raw)
 	for _, key := range keys {
@@ -113,7 +114,7 @@ func loadSitesFromEnv() map[string]*SiteCfg {
 		uc := env.ToEnvKey(key) // e.g., picadortech -> PICADORTECH
 		to := os.Getenv(uc + "_TO")
 		if strings.TrimSpace(to) == "" {
-			log.Fatalf("missing %s_TO for site %q", uc, key)
+			fatalf("missing %s_TO for site %q", uc, key)
 		}
 		allowed := splitString(os.Getenv(uc + "_ALLOWED_ORIGINS"))
 		prefix := env.Env(uc+"_SUBJECT_PREFIX", globalSubjectPrefix)
@@ -142,6 +143,12 @@ func loadSitesFromEnv() map[string]*SiteCfg {
 	}
 
 	return siteByKey
+}
+
+func fatalf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	slog.Default().Error(msg)
+	os.Exit(1)
 }
 
 func splitString(s string) []string {

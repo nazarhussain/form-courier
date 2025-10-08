@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -35,6 +34,8 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleContact(w http.ResponseWriter, r *http.Request) {
+	logger := LoggerFromContext(r.Context())
+
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Signature")
@@ -42,21 +43,25 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
+		logger.Warn("method not allowed")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	siteKey := strings.TrimPrefix(r.URL.Path, "/v1/contact/")
 	if siteKey == "" || strings.ContainsRune(siteKey, '/') {
+		logger.Warn("bad site key")
 		http.Error(w, "bad site key", http.StatusBadRequest)
 		return
 	}
 
 	cs, ok := config.Sites[siteKey]
 	if !ok {
+		logger.Warn("unknown site", "site", siteKey)
 		http.Error(w, "unknown site", http.StatusNotFound)
 		return
 	}
+	logger = logger.With("site", cs.Key)
 
 	// CORS for that site (exact match)
 	if len(cs.AllowedOrigins) > 0 {
@@ -71,7 +76,9 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r)
+	logger = logger.With("ip", ip)
 	if !Allow(siteKey, ip, config.RateBurst, config.RateRefillMinutes) {
+		logger.Warn("rate limited")
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
@@ -81,10 +88,12 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(maxBytes)+1))
 	r.Body.Close()
 	if err != nil {
+		logger.Warn("body read error", "err", err)
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
 	if len(body) > maxBytes {
+		logger.Warn("payload too large", "size_bytes", len(body))
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -93,6 +102,7 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	if cs.Secret != "" {
 		sig := r.Header.Get("X-Signature") // hex(HMAC-SHA256(body, secret))
 		if !verifyHMAC(body, cs.Secret, sig) {
+			logger.Warn("invalid signature")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -107,11 +117,13 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(ct, "application/json") && config.AllowJSON:
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			logger.Warn("bad json payload", "err", err)
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
 	case config.AllowForm:
 		if err := r.ParseForm(); err != nil {
+			logger.Warn("bad form payload", "err", err)
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
@@ -120,12 +132,14 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 		p.Message = r.Form.Get("message")
 		p.Website = r.Form.Get("website")
 	default:
+		logger.Warn("unsupported content type", "content_type", ct)
 		http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 		return
 	}
 
 	// Honeypot & validation
 	if p.Website != "" || p.Name == "" || !emailRegex.MatchString(p.Email) || strings.TrimSpace(p.Message) == "" {
+		logger.Warn("invalid submission", "from", p.Email)
 		http.Error(w, "invalid submission", http.StatusBadRequest)
 		return
 	}
@@ -153,10 +167,12 @@ func HandleContact(w http.ResponseWriter, r *http.Request) {
 		err = e.Send(addr, auth)
 	}
 	if err != nil {
-		log.Println("send error:", err)
+		logger.Error("smtp send failed", "err", err)
 		http.Error(w, "failed to send", http.StatusInternalServerError)
 		return
 	}
+
+	logger.Info("contact email sent", "from", p.Email)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
