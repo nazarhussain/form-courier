@@ -3,6 +3,7 @@ package form_mailer
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -200,7 +201,8 @@ func sendEmailSMTP(cs *SiteCfg, e *email.Email) error {
 	auth := smtp.PlainAuth("", cs.SMTP.User, cs.SMTP.Pass, cs.SMTP.Host)
 
 	if cs.SMTP.SSL {
-		return e.SendWithTLS(addr, auth, nil)
+		tlsCfg := &tls.Config{ServerName: cs.SMTP.Host}
+		return e.SendWithTLS(addr, auth, tlsCfg)
 	}
 	return e.Send(addr, auth)
 }

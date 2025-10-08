@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -62,7 +64,11 @@ func loggingMiddleware(baseLogger *slog.Logger, next http.Handler) http.Handler 
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				requestLogger.Error("panic recovered", "err", rec)
+				requestLogger.Error("panic recovered",
+					"err", rec,
+					"type", fmt.Sprintf("%T", rec),
+					"stack", string(debug.Stack()),
+				)
 				lrw.WriteHeader(http.StatusInternalServerError)
 			}
 			duration := time.Since(start)
