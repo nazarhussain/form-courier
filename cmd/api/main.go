@@ -16,6 +16,7 @@ func main() {
 	logger := newLogger()
 
 	config := form_courier.GetConfig()
+	form_courier.LogConfig(logger, config)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", form_courier.HandleHealth)

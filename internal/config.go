@@ -177,3 +177,38 @@ func splitString(s string) []string {
 	}
 	return out
 }
+
+func LogConfig(logger *slog.Logger, cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info("configuration loaded",
+		"listen_addr", cfg.ListenAddr,
+		"allow_json", cfg.AllowJSON,
+		"allow_form", cfg.AllowForm,
+		"rate_burst", cfg.RateBurst,
+		"rate_refill_minutes", cfg.RateRefillMinutes,
+		"max_body_kb", cfg.MaxBodyKB,
+		"sites", len(cfg.Sites),
+	)
+	for _, site := range cfg.Sites {
+		if site == nil || site.SMTP == nil {
+			continue
+		}
+		logger.Info("site configuration",
+			"site", site.Key,
+			"to", site.To,
+			"allowed_origins", site.AllowedOrigins,
+			"subject_prefix", site.SubjectPrefix,
+			"from_addr", site.FromAddr,
+			"smtp_host", site.SMTP.Host,
+			"smtp_user", site.SMTP.User,
+			"smtp_port", site.SMTP.Port,
+			"smtp_ssl", site.SMTP.SSL,
+			"has_secret", site.Secret != "",
+		)
+	}
+}
