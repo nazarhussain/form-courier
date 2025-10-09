@@ -124,9 +124,9 @@ const body = JSON.stringify({
   email: "[email protected]",
   message: "Hi!",
 });
-const sig = hexHmacSha256(body, process.env.PICADORTECH_SECRET);
+const sig = hexHmacSha256(body, process.env.MY_SITE_SECRET);
 
-await fetch("https://forms.example.com/v1/contact/picadortech", {
+await fetch("https://forms.example.com/v1/contact/my-site", {
   method: "POST",
   headers: { "Content-Type": "application/json", "X-Signature": sig },
   body,
@@ -136,7 +136,7 @@ await fetch("https://forms.example.com/v1/contact/picadortech", {
 ### cURL Test
 
 ```bash
-curl -X POST https://forms.example.com/v1/contact/picadortech \
+curl -X POST https://forms.example.com/v1/contact/my-site \
  -H "Content-Type: application/json" \
  -d '{"name":"Alice","email":"[email protected]","message":"Hello!"}'
 ```
@@ -146,7 +146,7 @@ curl -X POST https://forms.example.com/v1/contact/picadortech \
 ```html
 <form
   id="contact"
-  action="https://forms.example.com/v1/contact/picadortech"
+  action="https://forms.example.com/v1/contact/my-site"
   method="POST"
 >
   <input name="name" required />
